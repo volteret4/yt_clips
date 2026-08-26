@@ -1,0 +1,9 @@
+.git
+__pycache__
+*.pyc
+clips.db
+clips/
+sources/
+montages/
+.venv*
+tests
