@@ -47,10 +47,10 @@ def sample_video(tmp_path):
 def sample_video_factory(tmp_path):
     counter = {"n": 0}
 
-    def _factory(duration: float = 3.0, color: str = "blue") -> str:
+    def _factory(duration: float = 3.0, color: str = "blue", size: str = "640x360") -> str:
         counter["n"] += 1
         path = str(tmp_path / f"clip_{counter['n']}.mp4")
-        _make_test_video(path, duration=duration, color=color)
+        _make_test_video(path, duration=duration, color=color, size=size)
         return path
 
     return _factory

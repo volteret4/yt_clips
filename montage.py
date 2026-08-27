@@ -1,11 +1,16 @@
-"""Concatena varios clips en un solo vídeo. Adaptado de
-services/podcast_tts/articles_to_mp3.py::combine_audio_files -- concat
-demuxer con -c copy (sin recodificar). Funciona sin recodificar porque
-clip_extractor.py normaliza SIEMPRE todos los clips a la misma
-resolución/códec al extraerlos."""
+"""Concatena varios clips en un solo vídeo.
+
+Usa el filtro concat de ffmpeg (no el concat demuxer con -c copy): los
+clips ya no se normalizan a una resolución fija al extraerlos (ver
+clip_extractor.py -- ahora conservan la resolución nativa de la fuente
+para no perder calidad), así que pueden venir en tamaños distintos. El
+filtro concat sí soporta re-escalar cada entrada sobre la marcha -- se
+escalan todas a la resolución MÁS ALTA entre los clips elegidos (nunca se
+downscala innecesariamente el clip de mayor calidad del lote)."""
 import shutil
 import subprocess
-import tempfile
+
+from clip_extractor import probe_resolution
 
 
 def build_montage(clip_paths: list[str], out_path: str) -> None:
@@ -16,22 +21,36 @@ def build_montage(clip_paths: list[str], out_path: str) -> None:
         shutil.copy(clip_paths[0], out_path)
         return
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        list_file = f.name
-        for path in clip_paths:
-            safe_path = path.replace("'", "'\\''")
-            f.write(f"file '{safe_path}'\n")
+    resolutions = [probe_resolution(p) for p in clip_paths]
+    target_w = max(w for w, _ in resolutions)
+    target_h = max(h for _, h in resolutions)
+    # libx264 necesita dimensiones pares.
+    target_w += target_w % 2
+    target_h += target_h % 2
 
-    try:
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-v", "error",
-                "-f", "concat", "-safe", "0", "-i", list_file,
-                "-c", "copy",
-                out_path,
-            ],
-            check=True,
+    inputs = []
+    filter_parts = []
+    for i, path in enumerate(clip_paths):
+        inputs += ["-i", path]
+        filter_parts.append(
+            f"[{i}:v]scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v{i}]"
         )
-    finally:
-        import os
-        os.unlink(list_file)
+        filter_parts.append(f"[{i}:a]aresample=48000[a{i}]")
+    concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(len(clip_paths)))
+    filter_complex = ";".join(filter_parts) + f";{concat_inputs}concat=n={len(clip_paths)}:v=1:a=1[outv][outa]"
+
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            *inputs,
+            "-filter_complex", filter_complex,
+            "-map", "[outv]", "-map", "[outa]",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "256k",
+            "-movflags", "+faststart",
+            out_path,
+        ],
+        check=True,
+    )

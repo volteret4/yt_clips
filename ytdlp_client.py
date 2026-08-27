@@ -15,17 +15,20 @@ import yt_dlp
 COOKIES_FILE = os.environ.get("YTCLIPS_COOKIES_FILE", "/app/cookies.txt")
 
 
-def _ydl_base_opts() -> dict:
+def _ydl_base_opts(restrict_client: bool = True) -> dict:
     # remote_components: yt-dlp resuelve el "n challenge"/firma de YouTube
-    # con un runtime JS (deno, instalado en la imagen). player_client
-    # restringido a android/mweb: por defecto yt-dlp también resuelve
-    # formatos de otros clientes (android_vr/web_safari/tv) cuyas URLs
-    # firmadas dan 403 al pedirlas de verdad -- mismo ajuste que
-    # services/tracklist/app.py.
-    opts = {
-        "remote_components": ["ejs:github"],
-        "extractor_args": {"youtube": {"player_client": ["android", "mweb"]}},
-    }
+    # con un runtime JS (deno, instalado en la imagen).
+    #
+    # player_client=android/mweb (restrict_client=True): mismo ajuste que
+    # services/tracklist/app.py -- evita 403 en la URL firmada real para
+    # los clientes problemáticos (android_vr/web_safari/tv). PERO estos
+    # dos clientes solo exponen hasta ~360p en muchos vídeos (comprobado
+    # en vivo) -- ver download_video(), que intenta primero SIN esta
+    # restricción para conseguir la mejor calidad, y solo cae aquí si
+    # falla.
+    opts = {"remote_components": ["ejs:github"]}
+    if restrict_client:
+        opts["extractor_args"] = {"youtube": {"player_client": ["android", "mweb"]}}
     if os.path.isfile(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0:
         opts["cookiefile"] = COOKIES_FILE
     return opts
@@ -47,16 +50,14 @@ def get_info(url: str) -> dict:
     }
 
 
-def download_video(url: str, out_dir: str) -> tuple[str, dict]:
-    """Descarga el vídeo completo (mp4, hasta 1080p) a out_dir. Devuelve
-    (ruta_del_archivo, info)."""
+def _do_download(url: str, out_dir: str, restrict_client: bool) -> tuple[str, dict]:
     outtmpl = os.path.join(out_dir, "%(id)s.%(ext)s")
     ydl_opts = {
-        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]",
+        "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
         "outtmpl": outtmpl,
         "quiet": True, "no_warnings": True, "noplaylist": True,
-        **_ydl_base_opts(),
+        **_ydl_base_opts(restrict_client=restrict_client),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -67,6 +68,20 @@ def download_video(url: str, out_dir: str) -> tuple[str, dict]:
         mp4_path = os.path.splitext(path)[0] + ".mp4"
         if os.path.isfile(mp4_path):
             path = mp4_path
+    return path, info
+
+
+def download_video(url: str, out_dir: str) -> tuple[str, dict]:
+    """Descarga el vídeo completo a out_dir, en la mejor calidad
+    disponible. Primero intenta SIN restringir el player_client (expone
+    hasta 4K, pero en algunos vídeos/IPs de servidor la URL firmada real
+    puede dar 403); si falla, reintenta con player_client=android/mweb
+    (el ajuste ya probado en tracklist -- sin bloqueo, pero con techo
+    real de ~360p en algunos vídeos). Devuelve (ruta_del_archivo, info)."""
+    try:
+        path, info = _do_download(url, out_dir, restrict_client=False)
+    except yt_dlp.utils.DownloadError:
+        path, info = _do_download(url, out_dir, restrict_client=True)
     return path, {
         "video_id": info.get("id"),
         "title": info.get("title"),

@@ -7,14 +7,15 @@ un montaje y subirlo como vídeo nuevo a YouTube. Parte de
 
 ## Cómo funciona
 
-- **Extraer**: pega una URL de YouTube + tiempo de inicio/fin (segundos).
-  El vídeo completo se descarga una vez por `video_id` (yt-dlp, se
-  reutiliza si ya se había descargado para un clip anterior del mismo
-  vídeo) y el tramo se recorta localmente con ffmpeg, normalizado siempre
-  a 1920x1080 h264/aac.
+- **Extraer**: pega una URL de YouTube + tiempo de inicio/fin (segundos,
+  o `mm:ss`/`h:mm:ss`). El vídeo completo se descarga en la mejor calidad
+  disponible una vez por `video_id` (yt-dlp, se reutiliza si ya se había
+  descargado para un clip anterior del mismo vídeo) y el tramo se recorta
+  localmente con ffmpeg, preservando la resolución nativa de la fuente.
 - **Montaje**: elige varios clips guardados, en el orden deseado, y
-  genera un vídeo concatenado. Como todos los clips ya están
-  normalizados, la concatenación es directa (sin recodificar).
+  genera un vídeo concatenado. Si los clips tienen resoluciones distintas
+  se escalan a la más alta del lote (nunca se downscala el de mayor
+  calidad).
 - **Subir a YouTube**: sube el montaje generado (privado por defecto,
   elegible no listado/público). Requiere conectar una cuenta de YouTube
   la primera vez (OAuth2, ver `CLAUDE.md` para cómo crear el cliente en

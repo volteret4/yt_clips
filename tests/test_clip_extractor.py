@@ -1,5 +1,4 @@
 import os
-import subprocess
 
 import pytest
 
@@ -20,17 +19,14 @@ def test_extract_clip_invalid_range_raises(sample_video, tmp_path):
         clip_extractor.extract_clip(sample_video, 3.0, 1.0, out)
 
 
-def test_extract_clip_normalizes_resolution(sample_video, tmp_path):
-    # sample_video ya se genera a 640x360 -- confirma que extract_clip
-    # siempre reescala/rellena a 1920x1080 sea cual sea la fuente (para
-    # que la concatenación posterior con -c copy funcione siempre).
+def test_extract_clip_preserves_source_resolution(sample_video, tmp_path):
+    # sample_video se genera a 640x360 -- extract_clip NO debe reescalar
+    # (perdía calidad al forzar todo a un tamaño fijo). La normalización,
+    # si hace falta, se hace en montage.py al generar el montaje, no aquí.
     out = str(tmp_path / "out.mp4")
     clip_extractor.extract_clip(sample_video, 0, 2, out)
-    result = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "csv=p=0", out],
-        capture_output=True, text=True, check=True,
-    )
-    width, height = result.stdout.strip().split(",")
-    assert width == "1920"
-    assert height == "1080"
+    assert clip_extractor.probe_resolution(out) == (640, 360)
+
+
+def test_probe_resolution(sample_video):
+    assert clip_extractor.probe_resolution(sample_video) == (640, 360)

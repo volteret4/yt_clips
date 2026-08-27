@@ -452,12 +452,12 @@ a.yt-link { color: var(--accent); font-size: 12px; }
                 <input type="text" id="f_url" placeholder="https://www.youtube.com/watch?v=...">
             </div>
             <div>
-                <label>Inicio (segundos)</label>
-                <input type="number" id="f_start" step="0.1" min="0">
+                <label>Inicio (mm:ss o segundos)</label>
+                <input type="text" id="f_start" placeholder="1:23">
             </div>
             <div>
-                <label>Fin (segundos)</label>
-                <input type="number" id="f_end" step="0.1" min="0">
+                <label>Fin (mm:ss o segundos)</label>
+                <input type="text" id="f_end" placeholder="1:45">
             </div>
             <div>
                 <label>Etiqueta (opcional)</label>
@@ -496,6 +496,17 @@ function escapeHtml(s) {
     return d.innerHTML;
 }
 
+function formatSeconds(total) {
+    if (total === null || total === undefined) return '';
+    total = Math.round(total);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
+    const ss = String(s).padStart(2, '0');
+    return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
 function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab));
@@ -522,19 +533,43 @@ async function pollJob(jobId, statusEl, onDone) {
     setTimeout(() => pollJob(jobId, statusEl, onDone), 1500);
 }
 
+// Acepta "125", "125.5", "1:23", "1:23.5" o "1:02:03" (h:mm:ss) -> segundos.
+// null si el formato no se reconoce.
+function parseTimeToSeconds(raw) {
+    const s = (raw || '').trim();
+    if (!s) return null;
+    if (!s.includes(':')) {
+        const n = parseFloat(s);
+        return isNaN(n) ? null : n;
+    }
+    const parts = s.split(':');
+    if (parts.length > 3 || parts.some(p => p.trim() === '' || isNaN(parseFloat(p)))) return null;
+    const nums = parts.map(p => parseFloat(p));
+    let seconds = 0;
+    for (const n of nums) seconds = seconds * 60 + n;
+    return seconds;
+}
+
 async function createClip() {
     const url = document.getElementById('f_url').value.trim();
-    const start = document.getElementById('f_start').value;
-    const end = document.getElementById('f_end').value;
+    const startRaw = document.getElementById('f_start').value;
+    const endRaw = document.getElementById('f_end').value;
     const label = document.getElementById('f_label').value.trim();
     const errEl = document.getElementById('extract-error');
     const statusEl = document.getElementById('extract-job');
     errEl.textContent = '';
-    if (!url || start === '' || end === '') { errEl.textContent = 'Faltan campos'; return; }
+    if (!url || startRaw.trim() === '' || endRaw.trim() === '') { errEl.textContent = 'Faltan campos'; return; }
+
+    const start = parseTimeToSeconds(startRaw);
+    const end = parseTimeToSeconds(endRaw);
+    if (start === null || end === null) {
+        errEl.textContent = 'Formato de tiempo inválido -- usa segundos (125) o mm:ss (1:23)';
+        return;
+    }
 
     const r = await fetch('/api/clips', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({url, start: parseFloat(start), end: parseFloat(end), label}),
+        body: JSON.stringify({url, start, end, label}),
     });
     const data = await r.json();
     if (data.error) { errEl.textContent = data.error; return; }
@@ -552,7 +587,7 @@ async function loadClips() {
             <video controls preload="metadata" src="/api/clips/${c.id}/file"></video>
             <div class="body">
                 <div class="clip-title">${escapeHtml(c.label || c.source_title || ('Clip ' + c.id))}</div>
-                <div class="clip-meta">${escapeHtml(c.source_title || '')} · ${c.start_seconds}s–${c.end_seconds}s</div>
+                <div class="clip-meta">${escapeHtml(c.source_title || '')} · ${formatSeconds(c.start_seconds)}–${formatSeconds(c.end_seconds)}</div>
                 <div class="clip-actions">
                     <span class="clip-meta">${c.duration ? c.duration.toFixed(1) + 's' : ''}</span>
                     <button class="danger" onclick="deleteClip(${c.id})">Borrar</button>

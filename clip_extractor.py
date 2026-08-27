@@ -1,8 +1,11 @@
-"""Recorta un tramo de un vídeo ya descargado y lo normaliza siempre a la
-misma resolución/códec (1920x1080, h264/aac) -- así la concatenación
-posterior en montage.py puede usar el concat demuxer con -c copy (sin
-recodificar) sin importar de qué fuente/resolución venía cada clip
-original."""
+"""Recorta un tramo de un vídeo ya descargado, preservando su resolución
+nativa (sin escalar/recomprimir a un tamaño fijo -- eso degradaba fuentes
+de alta resolución). Se recodifica (no -c copy) para que el corte sea
+exacto al segundo pedido -- con -c copy ffmpeg solo puede cortar en
+keyframes, dando inicios/finales imprecisos. La normalización de
+resolución (si hace falta, cuando se juntan clips de tamaños distintos)
+se hace en montage.py, en el momento de generar el montaje -- así cada
+clip guardado conserva toda la calidad de su fuente."""
 import subprocess
 
 
@@ -14,10 +17,9 @@ def extract_clip(source_path: str, start_seconds: float, end_seconds: float, out
         [
             "ffmpeg", "-y", "-v", "error",
             "-ss", str(start_seconds), "-i", source_path, "-t", str(duration),
-            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-                   "pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "192k",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "256k",
             "-movflags", "+faststart",
             out_path,
         ],
@@ -36,3 +38,17 @@ def probe_duration(path: str) -> float:
         capture_output=True, text=True, check=True,
     )
     return float(out.stdout.strip())
+
+
+def probe_resolution(path: str) -> tuple[int, int]:
+    out = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=p=0",
+            path,
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    width, height = out.stdout.strip().split(",")
+    return int(width), int(height)

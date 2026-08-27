@@ -8,13 +8,24 @@
   opcional). `get_info()` metadata-only; `download_video()` descarga
   **siempre el vídeo completo** (nunca `--download-ranges` de yt-dlp —
   mismo motivo que tracklist: URLs firmadas de googlevideo.com con
-  cabeceras que no coinciden si se pide un tramo directamente).
-- `clip_extractor.py` — recorta con ffmpeg y normaliza SIEMPRE a
-  1920x1080 h264/aac, para que `montage.py` pueda concatenar después con
-  `-c copy` (sin recodificar) sin que importe la resolución/códec del
-  vídeo original.
-- `montage.py` — concat demuxer, adaptado de
-  `services/podcast_tts/articles_to_mp3.py::combine_audio_files`.
+  cabeceras que no coinciden si se pide un tramo directamente) y **sin
+  techo de resolución** (`bestvideo+bestaudio/best` — si YouTube ofrece
+  4K, se baja en 4K).
+- `clip_extractor.py` — recorta con ffmpeg preservando la resolución
+  nativa de la fuente (no reescala) — recodifica (CRF 18, preset medium)
+  solo para que el corte sea exacto al segundo pedido, no por keyframe.
+  La normalización de resolución (si hace falta) se hace en `montage.py`,
+  no aquí — así un clip guardado nunca pierde calidad respecto a su
+  fuente aunque no se llegue a usar en ningún montaje.
+- `montage.py` — filtro concat de ffmpeg (no el concat demuxer con
+  `-c copy`, que exigiría que todos los clips compartan resolución
+  exacta): escala cada clip a la resolución MÁS ALTA entre los
+  seleccionados (nunca downscala el de mayor calidad del lote),
+  `setsar=1`+`fps=30` para que el filtro acepte fuentes heterogéneas,
+  recodifica igual que `clip_extractor.py` (CRF 18/medium). Concepto
+  adaptado de `services/podcast_tts/articles_to_mp3.py::combine_audio_files`
+  (que sí usa el concat demuxer, porque ahí todos los audios ya comparten
+  formato).
 - `youtube_auth.py` — OAuth2 (scope `youtube.upload` únicamente),
   adaptado de `services/bot_conciertos/apis/google_calendar.py`. Cliente
   tipo "aplicación de escritorio" (`redirect_uri=http://localhost`): el
@@ -43,15 +54,18 @@ cliente (ANDROID_VR etc.), dando 403. Descargar siempre el archivo
 completo con el downloader nativo de yt-dlp evita ese problema; el tramo
 se recorta después, localmente.
 
-## Por qué el vídeo se normaliza siempre en la extracción
+## Por qué la resolución NO se fuerza en la extracción
 
-`montage.py` usa el concat **demuxer** de ffmpeg con `-c copy` (rápido,
-sin pérdida) en vez del filtro concat (que sí soporta entradas distintas
-pero recodifica siempre). Con `-c copy` todos los clips de entrada deben
-compartir exactamente resolución y códec -- como aquí TODOS los clips
-pasan por `clip_extractor.py`, forzar siempre 1920x1080/h264/aac ahí
-garantiza que la concatenación posterior nunca falle, sin importar de
-qué vídeo/resolución viniera cada clip.
+Versión anterior: `clip_extractor.py` reescalaba/rellenaba SIEMPRE a
+1920x1080 para poder usar el concat demuxer (`-c copy`) en `montage.py`.
+Problema real detectado por el usuario: degradaba fuentes de mayor
+resolución (4K/1440p) a 1080p aunque nunca se fueran a montar con otros
+clips, y además el `download_video()` de entonces ya capaba a
+`height<=1080` -- doble pérdida de calidad innecesaria. Ahora
+`download_video()` pide la mejor calidad sin techo, `clip_extractor.py`
+no reescala nada, y `montage.py` usa el filtro concat (soporta
+resoluciones de entrada distintas, escalando sobre la marcha a la más
+alta del lote) en vez del demuxer.
 
 ## OAuth de YouTube: cómo crear el cliente en Google Cloud Console
 
